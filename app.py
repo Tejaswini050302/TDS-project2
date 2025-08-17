@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
+from scipy import stats
 
 # ---------- Config ----------
 APP_TITLE = "TDS Data Analyst Agent - Wikipedia Scraper"
@@ -127,6 +128,42 @@ def try_plot(df: pd.DataFrame) -> Optional[str]:
     plt.close(fig)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     return "data:image/png;base64," + b64
+
+def try_regression_plot(df: pd.DataFrame) -> Optional[str]:
+    if df.shape[1] < 2:
+        return None
+    cols = list(df.columns)
+    x, y = cols[0], cols[1]
+    if not pd.api.types.is_numeric_dtype(df[y]):
+        df[y] = pd.to_numeric(df[y].str.replace(r"[^\d\.]", ""), errors="coerce")
+    df = df.dropna(subset=[x, y]).head(100)
+    if df.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(df[x], df[y])
+    slope, intercept, r_val, p_val, std_err = stats.linregress(df[x], df[y])
+    line_x = pd.Series([df[x].min(), df[x].max()])
+    ax.plot(line_x, slope * line_x + intercept, linestyle=":", color="red")
+    ax.set_xlabel(x)
+    ax.set_ylabel(y)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return "data:image/png;base64," + b64, r_val  # return both
+
+# In answer_from_wiki, after extracting df:
+if tables:
+    df = tables[0]
+    preview = df_preview(df)
+    reg = try_regression_plot(df)
+    if reg:
+        img, corr = reg
+        result["plot"] = img
+        result["notes"] = f"correlation (r): {corr:.3f}"
 
 def polish_with_llm(prompt: str, timeout: float = 20) -> Optional[str]:
     if not (AIPROXY_URL and AIPROXY_TOKEN):
